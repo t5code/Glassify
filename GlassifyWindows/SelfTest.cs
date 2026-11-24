@@ -51,26 +51,34 @@ sealed partial class WidgetForm
             await Preview("page_drift.png");
             await Shot("screen_drift.png");
 
-            // click-through: which window does Windows find in the clear margin, and does the widget stay visible?
+            // the blur behind the glass: off, on, and on without the see-through recipe
+            blur.Apply(false); await Task.Delay(500); await Shot("screen_blur_off.png");
+            blur.Apply(true); await Task.Delay(500); await Shot("screen_blur_on.png");
+            Note($"blur window {blur.Bounds} visible {blur.Visible}");
+
+            // click-through: which window does Windows find in the clear margin and on the glass, and does the widget stay visible?
+            mouseTimer.Stop();
             var margin = new Native.POINT { X = Left + 8, Y = Top + Height - 8 };
             var centre = new Native.POINT { X = GlassTopLeft.X + (int)(fitW * Dpi / 2), Y = GlassTopLeft.Y + (int)(fitStrip * Dpi / 2) };
-            string Under(Native.POINT p) { var h = Native.GetAncestor(Native.WindowFromPoint(p), 2); return h == Handle ? "widget" : h == card.Handle ? "card" : "other"; }
+            string Under(Native.POINT p) { var h = Native.GetAncestor(Native.WindowFromPoint(p), 2); return h == Handle ? "widget" : h == blur.Handle ? "blur" : h == card.Handle ? "card" : "other"; }
+            Native.SetExStyle(Handle, Native.WS_EX_TRANSPARENT | Native.WS_EX_LAYERED, false);
+            await Task.Delay(300);
+            Note($"taking clicks: margin->{Under(margin)} glass->{Under(centre)}");
             foreach (var (name, layered, alpha) in new[] { ("style-only", false, false), ("layered", true, false), ("layered+alpha", true, true) })
             {
-                Native.SetExStyle(Handle, Native.WS_EX_TRANSPARENT | Native.WS_EX_LAYERED, false);
-                await Task.Delay(150);
                 LayeredToo = layered; LayeredAlpha = alpha; through = false;
                 SetThrough(true);
                 await Task.Delay(400);
                 string a = Under(margin), b = Under(centre);
                 await Shot($"screen_through_{name}.png");
                 SetThrough(false);
+                Native.SetExStyle(Handle, Native.WS_EX_TRANSPARENT | Native.WS_EX_LAYERED, false);
                 await Task.Delay(300);
-                Note($"click-through {name}: margin->{a} centre->{b}; after switching back: margin->{Under(margin)} centre->{Under(centre)}");
+                Note($"click-through {name}: margin->{a} glass->{b}; after switching back: margin->{Under(margin)} glass->{Under(centre)}");
                 await Shot($"screen_back_{name}.png");
             }
-            Native.SetExStyle(Handle, Native.WS_EX_TRANSPARENT | Native.WS_EX_LAYERED, false);
-            LayeredToo = true; LayeredAlpha = false;
+            LayeredToo = true; LayeredAlpha = false; through = false;
+            mouseTimer.Start();
 
             await core.ExecuteScriptAsync("document.getElementById('btnSettings').click(); 1");
             await Task.Delay(1600);

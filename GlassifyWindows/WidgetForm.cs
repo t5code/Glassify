@@ -29,6 +29,7 @@ sealed partial class WidgetForm : Form
     readonly SpotifyInfo spotify = new();
     readonly ScreenGrab grab = new();
     readonly NotifyIcon tray = new();
+    readonly BlurBehind blur = new();
     readonly System.Windows.Forms.Timer mouseTimer = new() { Interval = 20 };
     readonly System.Windows.Forms.Timer shrinkTimer = new() { Interval = 800 };
     readonly System.Windows.Forms.Timer pollTimer = new() { Interval = 2000 };
@@ -72,6 +73,7 @@ sealed partial class WidgetForm : Form
         BackColor = Color.Black;
         using (var ico = Assembly.GetExecutingAssembly().GetManifestResourceStream("Glassify.ico")) if (ico != null) Icon = new Icon(ico);
         Bounds = StartBounds();
+        Owner = blur;                       // an owned window always stays in front of its owner: the blur sits right behind the glass
 
         tray.Icon = Icon;
         tray.Text = "Glassify";
@@ -114,6 +116,8 @@ sealed partial class WidgetForm : Form
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        FollowBlur();
+        blur.Show();
         try { await StartPage(); }
         catch (Exception ex)
         {
@@ -140,6 +144,7 @@ sealed partial class WidgetForm : Form
     {
         base.OnMove(e);
         controller?.NotifyParentWindowPositionChanged();
+        FollowBlur();
         CaptureRegionChanged();
     }
 
@@ -155,6 +160,7 @@ sealed partial class WidgetForm : Form
         SavePosition();
         tray.Visible = false;
         tray.Dispose();
+        try { blur.Close(); } catch { }
         audio.Dispose();
         grab.Dispose();
         try { controller?.Close(); } catch { }
@@ -276,13 +282,14 @@ sealed partial class WidgetForm : Form
                 case "shape":
                     {
                         double w = Num("w"), h = Num("h"), r = Num("r");
-                        if (w > 0 && h > 0) { shapeW = w; shapeH = h; shapeR = double.IsNaN(r) ? 0 : r; }
+                        if (w > 0 && h > 0) { shapeW = w; shapeH = h; shapeR = double.IsNaN(r) ? 0 : r; FollowBlur(); }
                         break;
                     }
                 case "clear":
                     clearOn = m.TryGetProperty("on", out var on) && on.ValueKind == JsonValueKind.True;
                     // while Clear is showing, the widget is left out of every screen capture (so it never sees itself)
                     Native.SetWindowDisplayAffinity(Handle, clearOn && !NoExclude ? Native.WDA_EXCLUDEFROMCAPTURE : Native.WDA_NONE);
+                    if (blur.IsHandleCreated) Native.SetWindowDisplayAffinity(blur.Handle, clearOn && !NoExclude ? Native.WDA_EXCLUDEFROMCAPTURE : Native.WDA_NONE);
                     if (clearOn) CaptureRegionChanged();
                     grab.SetWanted(clearOn);
                     break;
@@ -371,6 +378,14 @@ sealed partial class WidgetForm : Form
         shrinkTimer.Stop(); shrinkTimer.Start();
         CaptureRegionChanged();
         SavePosition();
+    }
+
+    /// Keeps the blur window exactly under the glass.
+    void FollowBlur()
+    {
+        var g = GlassTopLeft;
+        double rad = Math.Min(shapeR, Math.Min(shapeH / 2, shapeW / 2));
+        blur.Follow(new Rectangle(g.X, g.Y, (int)Math.Round(shapeW * Dpi), (int)Math.Round(shapeH * Dpi)), (int)Math.Round(rad * Dpi));
     }
 
     /// Tells the screen capture which part of the screen sits behind the glass.

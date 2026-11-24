@@ -22,6 +22,10 @@ body{color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.5;use
   border-radius:var(--rad);overflow:hidden;transition:border-radius .6s var(--ease);
   box-shadow:0 24px 54px rgba(0,0,0,.36),0 6px 16px rgba(0,0,0,.26)}
 .widget.open{--rad:30px}
+/* Windows only: there the window cannot blur the desktop behind it, so the app hands over a small picture of what is under the glass.
+   Shown on a canvas right behind the widget, the preview's own backdrop blur then does exactly what it did over the preview's desk. */
+#under{position:absolute;left:57px;top:33px;display:block;pointer-events:none}
+.widget.bf{-webkit-backdrop-filter:blur(22px) saturate(1.5);backdrop-filter:blur(22px) saturate(1.5)}
 .widget canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .widget::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   box-shadow:inset 0 1px .5px rgba(255,255,255,.6),inset 0 -1px .5px rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.09),
@@ -176,6 +180,23 @@ function pullFrame(){
     if(x.status===200&&w>0&&h>0&&x.response&&x.response.byteLength===w*h*4){
       if(back.width!==w||back.height!==h){ back.width=w; back.height=h; }
       bkx.putImageData(new ImageData(new Uint8ClampedArray(x.response),w,h),0,0); backRows=rows;
+    }
+    done();
+  };
+  x.onerror=done; x.send();
+}
+/* Windows only (see #under in the styles): the picture of what lies under the glass, for the see-through blur in Drift and Vinyl */
+let underC=null, underX=null, underBusy=false, underAgain=false;
+function pullUnder(){
+  if(underBusy){ underAgain=true; return; } underBusy=true;
+  const done=()=>{ underBusy=false; if(underAgain){ underAgain=false; pullUnder(); } };
+  const x=new XMLHttpRequest(); x.open('GET','under'); x.responseType='arraybuffer';
+  x.onload=()=>{
+    const w=+x.getResponseHeader('X-W'), h=+x.getResponseHeader('X-H');
+    if(x.status===200&&w>0&&h>0&&x.response&&x.response.byteLength===w*h*4){
+      if(!underC){ underC=document.createElement('canvas'); underC.id='under'; underC.setAttribute('aria-hidden','true'); document.body.insertBefore(underC,widget); underX=underC.getContext('2d'); widget.classList.add('bf'); shW=0; }
+      if(underC.width!==w||underC.height!==h){ underC.width=w; underC.height=h; }
+      underX.putImageData(new ImageData(new Uint8ClampedArray(x.response),w,h),0,0);
     }
     done();
   };
@@ -521,7 +542,8 @@ function frame(now){
 
   clearMix+=((MODES[S.mode].id==='clear'?1:0)-clearMix)*(1-Math.exp(-dt*4.5));
   const radCss=parseFloat(getComputedStyle(widget).borderTopLeftRadius)||r0;
-  if(w!==shW||h!==shH||Math.abs(radCss-shR)>0.2){ shW=w; shH=h; shR=radCss; post('shape',{w:widget.clientWidth,h:widget.clientHeight,r:radCss}); }   /* the app needs the outline for clicks and for the blur behind the glass */
+  if(w!==shW||h!==shH||Math.abs(radCss-shR)>0.2){ shW=w; shH=h; shR=radCss; post('shape',{w:widget.clientWidth,h:widget.clientHeight,r:radCss});
+    if(underC){ underC.style.width=(widget.clientWidth-2)+'px'; underC.style.height=(widget.clientHeight-2)+'px'; underC.style.borderRadius=Math.max(0,radCss-1)+'px'; } }   /* the app needs the outline for clicks and for the blur behind the glass */
   gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,w,h);
   gl.useProgram(progMain.p); const u=progMain.u;
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,fboB.tex); gl.uniform1i(u.uBg,0);
@@ -610,7 +632,8 @@ window.__gw={
     img.onerror=()=>setTrack(title,artist,noCover);
     img.src=src;
   },
-  frame(){ pullFrame(); }
+  frame(){ pullFrame(); },
+  under(){ pullUnder(); }
 };
 
 /* ================= pointer: hover lift, press wave, drag ================= */

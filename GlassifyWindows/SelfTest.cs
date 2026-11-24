@@ -51,16 +51,20 @@ sealed partial class WidgetForm
             await Preview("page_drift.png");
             await Shot("screen_drift.png");
 
-            // the blur behind the glass: off, on, and on without the see-through recipe
-            blur.Apply(false); await Task.Delay(500); await Shot("screen_blur_off.png");
-            blur.Apply(true); await Task.Delay(500); await Shot("screen_blur_on.png");
-            Note($"blur window {blur.Bounds} visible {blur.Visible}");
+            // the see-through picture (Drift): what the capture handed over, and how the page shows it
+            if (grab.LatestUnder() is { } u) { SavePicture(u.data, u.w, u.h, "under_picture.png"); Note($"under picture {u.w}x{u.h}  capture '{grab.Status}' seen {grab.Seen} sent {grab.Sent}"); }
+            else Note($"under picture: none  capture '{grab.Status}'");
+            string under = await core.ExecuteScriptAsync("(function(){var u=document.getElementById('under');return u?u.width+'x'+u.height+' css '+u.style.width+' x '+u.style.height+' bf='+document.getElementById('widget').classList.contains('bf'):'no under canvas'})()");
+            Note("page under-canvas: " + under);
+            // one real screenshot with the widget briefly allowed into capture, to see the true result on screen
+            Native.SetWindowDisplayAffinity(Handle, Native.WDA_NONE); await Task.Delay(250); await Shot("screen_drift_real.png");
+            Native.SetWindowDisplayAffinity(Handle, Native.WDA_EXCLUDEFROMCAPTURE); await Task.Delay(400);
 
             // click-through: which window does Windows find in the clear margin and on the glass, and does the widget stay visible?
             mouseTimer.Stop();
             var margin = new Native.POINT { X = Left + 8, Y = Top + Height - 8 };
             var centre = new Native.POINT { X = GlassTopLeft.X + (int)(fitW * Dpi / 2), Y = GlassTopLeft.Y + (int)(fitStrip * Dpi / 2) };
-            string Under(Native.POINT p) { var h = Native.GetAncestor(Native.WindowFromPoint(p), 2); return h == Handle ? "widget" : h == blur.Handle ? "blur" : h == card.Handle ? "card" : "other"; }
+            string Under(Native.POINT p) { var h = Native.GetAncestor(Native.WindowFromPoint(p), 2); return h == Handle ? "widget" : h == card.Handle ? "card" : "other"; }
             Native.SetExStyle(Handle, Native.WS_EX_TRANSPARENT | Native.WS_EX_LAYERED, false);
             await Task.Delay(300);
             Note($"taking clicks: margin->{Under(margin)} glass->{Under(centre)}");
@@ -95,17 +99,7 @@ sealed partial class WidgetForm
             await core.ExecuteScriptAsync("document.getElementById('mode-clear').click(); 1");
             await Task.Delay(3500);
             Note($"clear: capture status '{grab.Status}'  pictures seen {grab.Seen} sent {grab.Sent} still {grab.Still}");
-            if (grab.Latest() is { } f)
-            {
-                using var bmp = new Bitmap(f.w, f.h, PixelFormat.Format32bppArgb);
-                var bits = bmp.LockBits(new Rectangle(0, 0, f.w, f.h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-                var bgra = new byte[f.data.Length];
-                for (int i = 0; i < bgra.Length; i += 4) { bgra[i] = f.data[i + 2]; bgra[i + 1] = f.data[i + 1]; bgra[i + 2] = f.data[i]; bgra[i + 3] = 255; }
-                for (int y = 0; y < f.h; y++) System.Runtime.InteropServices.Marshal.Copy(bgra, y * f.w * 4, bits.Scan0 + y * bits.Stride, f.w * 4);
-                bmp.UnlockBits(bits);
-                bmp.Save(Path.Combine(TestDir, "clear_picture.png"), ImageFormat.Png);
-                Note($"clear picture {f.w}x{f.h} rows {f.rows:F3}");
-            }
+            if (grab.Latest() is { } f) { SavePicture(f.data, f.w, f.h, "clear_picture.png"); Note($"clear picture {f.w}x{f.h} rows {f.rows:F3}"); }
             await Preview("page_clear.png");
             await Shot("screen_clear_excluded.png");
 
@@ -123,6 +117,17 @@ sealed partial class WidgetForm
         }
         catch (Exception e) { Note("SELFTEST FAILED: " + e); }
         finally { Close(); }
+    }
+
+    void SavePicture(byte[] rgba, int w, int h, string name)
+    {
+        using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        var bits = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        var bgra = new byte[rgba.Length];
+        for (int i = 0; i < bgra.Length; i += 4) { bgra[i] = rgba[i + 2]; bgra[i + 1] = rgba[i + 1]; bgra[i + 2] = rgba[i]; bgra[i + 3] = 255; }
+        for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(bgra, y * w * 4, bits.Scan0 + y * bits.Stride, w * 4);
+        bmp.UnlockBits(bits);
+        bmp.Save(Path.Combine(TestDir, name), ImageFormat.Png);
     }
 
     async Task Preview(string name)

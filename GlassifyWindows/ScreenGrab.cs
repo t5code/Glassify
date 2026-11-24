@@ -6,29 +6,33 @@ using Vortice.DXGI;
 
 namespace Glassify;
 
-/// Clear mode: a live picture of the screen behind the glass, without the widget in it.
-/// Windows' desktop duplication hands over the monitor's picture only when something on it changed; the widget's own
-/// window is marked "exclude from capture", so it never appears. Only the patch behind the widget is read back, pictures
-/// identical to the last one are dropped, and while that patch stays still the checking slows right down.
+/// A live picture of the screen behind the glass, without the widget in it. Two uses:
+/// Clear mode gets a sharp one (the glass bends and blurs it); Drift and Vinyl get a tiny one, for the faint blurred
+/// see-through. Windows' desktop duplication hands over the monitor's picture only when something on it changed; the
+/// widget's own window is marked "exclude from capture", so it never appears. Only the patch behind the widget is read
+/// back, pictures identical to the last one are dropped, and while that patch stays still the checking slows right down.
 sealed class ScreenGrab : IDisposable
 {
-    const int OutW = 768;          // the page works at 2 x 384 across and 2 x 83 (=166) per strip-height
+    const int ClearW = 768;        // Clear: the page works at 2 x 384 across and 2 x 83 (=166) per strip-height
+    const int UnderW = 160;        // the see-through picture is blurred heavily by the page, so it can be tiny
     readonly object gate = new();
     Thread? thread;
     volatile bool run;
     Rectangle region;              // what the page needs, in screen pixels, starting at the glass's top-left corner
     double rows = 1.7;
-    byte[] latest = Array.Empty<byte>();
-    int latestW, latestH; double latestRows;
+    bool clear;
+    byte[] latest = Array.Empty<byte>(), latestUnder = Array.Empty<byte>();
+    int latestW, latestH, underW, underH; double latestRows;
 
     public string Status { get; private set; } = "off";
     public long Seen { get; private set; }
     public long Sent { get; private set; }
     public bool Still { get; private set; }
-    /// Raised (on the capture thread) whenever a new picture is ready for the page.
-    public event Action? FrameReady;
+    /// Raised (on the capture thread) whenever a new picture is ready for the page; true = the sharp Clear picture.
+    public event Action<bool>? FrameReady;
 
-    public void SetRegion(Rectangle r, double rowCount) { lock (gate) { region = r; rows = rowCount; } }
+    /// `forClear`: the area Clear mode needs (`rowCount` strip-heights tall); otherwise just the glass itself.
+    public void SetRegion(Rectangle r, double rowCount, bool forClear) { lock (gate) { region = r; rows = rowCount; clear = forClear; } }
 
     public void SetWanted(bool on)
     {
@@ -44,7 +48,7 @@ sealed class ScreenGrab : IDisposable
             run = false;
             var t = thread; thread = null;
             t?.Join(1500);
-            lock (gate) { latest = Array.Empty<byte>(); latestW = 0; }
+            lock (gate) { latest = Array.Empty<byte>(); latestW = 0; latestUnder = Array.Empty<byte>(); underW = 0; }
             Status = "off";
         }
     }
@@ -52,6 +56,11 @@ sealed class ScreenGrab : IDisposable
     public (byte[] data, int w, int h, double rows)? Latest()
     {
         lock (gate) return latestW > 0 ? (latest, latestW, latestH, latestRows) : null;
+    }
+
+    public (byte[] data, int w, int h)? LatestUnder()
+    {
+        lock (gate) return underW > 0 ? (latestUnder, underW, underH) : null;
     }
 
     public void Dispose() => SetWanted(false);
@@ -114,7 +123,7 @@ sealed class ScreenGrab : IDisposable
             {
                 while (run)
                 {
-                    Rectangle r; double rowCount; lock (gate) { r = region; rowCount = rows; }
+                    Rectangle r; double rowCount; bool forClear; lock (gate) { r = region; rowCount = rows; forClear = clear; }
                     var c2 = new Point(r.Left + r.Width / 2, r.Top + Math.Min(r.Height, 40) / 2);
                     if (!desk.Contains(c2) && Screen.AllScreens.Any(s => s.Bounds.Contains(c2))) return;   // moved to another monitor
 
@@ -144,13 +153,14 @@ sealed class ScreenGrab : IDisposable
                     }
                     else if (res.Code != Vortice.DXGI.ResultCode.WaitTimeout.Code) return;       // Windows took the picture away; start over
                     if (keep == null || (!fresh && !moved)) continue;
-                    next = clock.ElapsedMilliseconds + (Still ? 120 : 33);
+                    next = clock.ElapsedMilliseconds + (forClear ? (Still ? 120 : 33) : (Still ? 250 : 66));
                     lastWant = r; lastRows = rowCount;
                     if (fresh) Seen++;
 
                     // read back only the patch behind the widget (clipped to this monitor)
                     var clip = Rectangle.Intersect(r, desk);
-                    int W = OutW, H = Math.Max(2, (int)Math.Round(166 * rowCount));
+                    int W = forClear ? ClearW : UnderW;
+                    int H = forClear ? Math.Max(2, (int)Math.Round(166 * rowCount)) : Math.Clamp((int)Math.Round(UnderW * (double)r.Height / Math.Max(1, r.Width)), 2, 600);
                     int cw = Math.Max(0, clip.Width), ch = Math.Max(0, clip.Height);
                     byte[] crop = new byte[cw * ch * 4];
                     if (cw > 0 && ch > 0)
@@ -173,10 +183,10 @@ sealed class ScreenGrab : IDisposable
                     }
 
                     // nothing new behind the glass? then there is nothing to send
-                    string key = $"{clip.Left},{clip.Top},{cw},{ch},{r.Left},{r.Top},{r.Width},{r.Height},{H}";
+                    string key = $"{clip.Left},{clip.Top},{cw},{ch},{r.Left},{r.Top},{r.Width},{r.Height},{W},{H}";
                     if (key == prevKey && crop.AsSpan().SequenceEqual(prev))
                     {
-                        if (++unchanged >= 45) Still = true;
+                        if (++unchanged >= (forClear ? 45 : 20)) Still = true;
                         continue;
                     }
                     prevKey = key; prev = crop; unchanged = 0; Still = false;
@@ -191,9 +201,13 @@ sealed class ScreenGrab : IDisposable
                         int dh = Math.Clamp((int)Math.Round(ch / (double)r.Height * H), 1, H - dy0);
                         Resample(crop, cw, ch, picture, W, dx0, dy0, dw, dh);
                     }
-                    lock (gate) { latest = picture; latestW = W; latestH = H; latestRows = rowCount; }
+                    lock (gate)
+                    {
+                        if (forClear) { latest = picture; latestW = W; latestH = H; latestRows = rowCount; }
+                        else { latestUnder = picture; underW = W; underH = H; }
+                    }
                     Sent++;
-                    FrameReady?.Invoke();
+                    FrameReady?.Invoke(forClear);
                 }
             }
             finally { staging?.Dispose(); keep?.Dispose(); }

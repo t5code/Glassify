@@ -29,7 +29,6 @@ sealed partial class WidgetForm : Form
     readonly SpotifyInfo spotify = new();
     readonly ScreenGrab grab = new();
     readonly NotifyIcon tray = new();
-    readonly BlurBehind blur = new();
     readonly System.Windows.Forms.Timer mouseTimer = new() { Interval = 20 };
     readonly System.Windows.Forms.Timer shrinkTimer = new() { Interval = 800 };
     readonly System.Windows.Forms.Timer pollTimer = new() { Interval = 2000 };
@@ -73,7 +72,6 @@ sealed partial class WidgetForm : Form
         BackColor = Color.Black;
         using (var ico = Assembly.GetExecutingAssembly().GetManifestResourceStream("Glassify.ico")) if (ico != null) Icon = new Icon(ico);
         Bounds = StartBounds();
-        Owner = blur;                       // an owned window always stays in front of its owner: the blur sits right behind the glass
 
         tray.Icon = Icon;
         tray.Text = "Glassify";
@@ -111,13 +109,14 @@ sealed partial class WidgetForm : Form
         base.OnHandleCreated(e);
         Native.MakeSeeThrough(Handle);
         SetThrough(true);                 // until the mouse is over the glass itself
+        // The widget takes pictures of the screen behind itself (for Clear, and for the blurred see-through), so it must never
+        // be in those pictures: Windows leaves it out of all screen capture. It is still fully visible on the screen itself.
+        if (!NoExclude) Native.SetWindowDisplayAffinity(Handle, Native.WDA_EXCLUDEFROMCAPTURE);
     }
 
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        FollowBlur();
-        blur.Show();
         try { await StartPage(); }
         catch (Exception ex)
         {
@@ -144,7 +143,6 @@ sealed partial class WidgetForm : Form
     {
         base.OnMove(e);
         controller?.NotifyParentWindowPositionChanged();
-        FollowBlur();
         CaptureRegionChanged();
     }
 
@@ -160,7 +158,6 @@ sealed partial class WidgetForm : Form
         SavePosition();
         tray.Visible = false;
         tray.Dispose();
-        try { blur.Close(); } catch { }
         audio.Dispose();
         grab.Dispose();
         try { controller?.Close(); } catch { }
@@ -191,7 +188,7 @@ sealed partial class WidgetForm : Form
               window.webkit={messageHandlers:{glassify:{postMessage:function(m){window.chrome.webview.postMessage(m);}}}};
               window.chrome.webview.addEventListener('message',function(e){
                 var d=e.data,g=window.__gw; if(!g||!d) return;
-                if(d.b) g.bands(d.b); else if(d.f) g.frame(); else if('p' in d) g.playing(d.p); else if('t' in d) g.track(d.t,d.a,d.c);
+                if(d.b) g.bands(d.b); else if(d.f) g.frame(); else if(d.u) g.under(); else if('p' in d) g.playing(d.p); else if('t' in d) g.track(d.t,d.a,d.c);
               });
             })();
             """);
@@ -210,7 +207,7 @@ sealed partial class WidgetForm : Form
         };
         core.Navigate(Origin + "/index.html");
 
-        grab.FrameReady += () => { if (alive && pageReady && clearOn) Post("{\"f\":1}"); };
+        grab.FrameReady += forClear => { if (alive && pageReady) Post(forClear ? "{\"f\":1}" : "{\"u\":1}"); };
         spotify.StateChanged += s => OnUi(() => SpotifyChanged(s));
         spotify.TrackChanged += (t, a, c) => OnUi(() => SendTrack(t, a, c));
         mouseTimer.Start();
@@ -235,6 +232,13 @@ sealed partial class WidgetForm : Form
             var (data, w, h, rows) = f.Value;
             e.Response = env.CreateWebResourceResponse(new MemoryStream(data), 200, "OK",
                 $"Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nX-W: {w}\r\nX-H: {h}\r\nX-Rows: {rows.ToString("F4", CultureInfo.InvariantCulture)}");
+        }
+        else if (path == "/under")
+        {
+            var u = grab.LatestUnder();
+            if (u == null) { e.Response = env.CreateWebResourceResponse(null, 204, "No Content", "Cache-Control: no-store"); return; }
+            e.Response = env.CreateWebResourceResponse(new MemoryStream(u.Value.data), 200, "OK",
+                $"Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nX-W: {u.Value.w}\r\nX-H: {u.Value.h}");
         }
         else if (path is "/" or "/index.html")
         {
@@ -268,7 +272,10 @@ sealed partial class WidgetForm : Form
                     SpotifyChanged(spotify.State);
                     if (spotify.Last is { } l) SendTrack(l.title, l.artist, l.cover);
                     Post(playing ? "{\"p\":true}" : "{\"p\":false}");
+                    CaptureRegionChanged();
+                    grab.SetWanted(true);
                     if (clearOn && grab.Latest() != null) Post("{\"f\":1}");
+                    if (grab.LatestUnder() != null) Post("{\"u\":1}");
                     break;
                 case "save":
                     if (m.TryGetProperty("json", out var j) && j.GetString() is { Length: < 20000 } text) { settingsJson = text; Save(); }
@@ -282,16 +289,12 @@ sealed partial class WidgetForm : Form
                 case "shape":
                     {
                         double w = Num("w"), h = Num("h"), r = Num("r");
-                        if (w > 0 && h > 0) { shapeW = w; shapeH = h; shapeR = double.IsNaN(r) ? 0 : r; FollowBlur(); }
+                        if (w > 0 && h > 0) { shapeW = w; shapeH = h; shapeR = double.IsNaN(r) ? 0 : r; CaptureRegionChanged(); }
                         break;
                     }
                 case "clear":
                     clearOn = m.TryGetProperty("on", out var on) && on.ValueKind == JsonValueKind.True;
-                    // while Clear is showing, the widget is left out of every screen capture (so it never sees itself)
-                    Native.SetWindowDisplayAffinity(Handle, clearOn && !NoExclude ? Native.WDA_EXCLUDEFROMCAPTURE : Native.WDA_NONE);
-                    if (blur.IsHandleCreated) Native.SetWindowDisplayAffinity(blur.Handle, clearOn && !NoExclude ? Native.WDA_EXCLUDEFROMCAPTURE : Native.WDA_NONE);
-                    if (clearOn) CaptureRegionChanged();
-                    grab.SetWanted(clearOn);
+                    CaptureRegionChanged();
                     break;
                 case "drag":
                     if ((Native.GetAsyncKeyState(Native.VK_LBUTTON) & 0x8000) != 0 && Native.GetCursorPos(out var p0))
@@ -380,23 +383,22 @@ sealed partial class WidgetForm : Form
         SavePosition();
     }
 
-    /// Keeps the blur window exactly under the glass.
-    void FollowBlur()
-    {
-        var g = GlassTopLeft;
-        double rad = Math.Min(shapeR, Math.Min(shapeH / 2, shapeW / 2));
-        blur.Follow(new Rectangle(g.X, g.Y, (int)Math.Round(shapeW * Dpi), (int)Math.Round(shapeH * Dpi)), (int)Math.Round(rad * Dpi));
-    }
-
-    /// Tells the screen capture which part of the screen sits behind the glass.
+    /// Tells the screen capture which part of the screen the page needs a picture of.
     void CaptureRegionChanged()
     {
-        if (!clearOn) return;
-        // 0.7 of a strip more than the glass covers (the glass bends what lies just below it into view), in whole picture rows
-        double px = Math.Min(996, Math.Ceiling(((Height / Dpi - PADT - PADB) / Math.Max(1, fitStrip) + 0.7) * 166));
-        double rows = px / 166;
         var g = GlassTopLeft;
-        grab.SetRegion(new Rectangle(g.X, g.Y, (int)Math.Round(fitW * Dpi), (int)Math.Round(fitStrip * rows * Dpi)), rows);
+        if (clearOn)
+        {
+            // Clear: 0.7 of a strip more than the glass covers (the glass bends what lies just below it into view), in whole picture rows
+            double px = Math.Min(996, Math.Ceiling(((Height / Dpi - PADT - PADB) / Math.Max(1, fitStrip) + 0.7) * 166));
+            double rows = px / 166;
+            grab.SetRegion(new Rectangle(g.X, g.Y, (int)Math.Round(fitW * Dpi), (int)Math.Round(fitStrip * rows * Dpi)), rows, true);
+        }
+        else
+        {
+            // Drift and Vinyl: just what is under the glass, for the faint blurred see-through
+            grab.SetRegion(new Rectangle(g.X, g.Y, (int)Math.Round(shapeW * Dpi), (int)Math.Round(shapeH * Dpi)), 1, false);
+        }
     }
 
     // MARK: mouse: only the glass itself takes clicks; the clear margin around it lets them through

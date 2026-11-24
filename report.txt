@@ -1,0 +1,15 @@
+windows 10.0.26100.0  dpi-scale 1  screen {X=0,Y=0,Width=1024,Height=768}
+page ready: True  messages from page: 3  window {X=156,Y=32,Width=712,Height=243}  fit 600x130.4  shape 600x130 r65.0
+page canvas: "1200x260 nogl=false ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0"
+under picture 160x35  capture 'capturing' seen 28 sent 1
+page under-canvas: "160x35 css 598px x 128px bf=true"
+taking clicks: margin->widget glass->widget
+click-through style-only: margin->widget glass->widget; after switching back: margin->widget glass->widget
+click-through layered: margin->other glass->other; after switching back: margin->widget glass->widget
+click-through layered+alpha: margin->other glass->other; after switching back: margin->widget glass->widget
+settings open: window {X=156,Y=32,Width=712,Height=480}  panel 237  shape 600x367 r30.0
+clear: capture status 'capturing'  pictures seen 116 sent 6 still False
+clear picture 768x283 rows 1.705
+process audio capture: available, format 32 bit IEEEFloat: 48000Hz 2 channels
+spotify: state NotRunning source ''  audio: off
+done

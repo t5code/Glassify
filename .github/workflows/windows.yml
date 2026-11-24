@@ -1,0 +1,73 @@
+name: Windows build
+
+# Builds Glassify.exe on a real Windows machine, runs its self-test (screenshots + a short report, saved on the
+# "ci-results" branch), and publishes the exe as the "latest" download on the Releases page.
+on:
+  push:
+    branches: [main]
+    paths: ['GlassifyWindows/**', 'Glassify/Web/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build Glassify.exe
+        run: >
+          dotnet publish GlassifyWindows/GlassifyWindows.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+          -p:DebugType=none -o out
+
+      - name: Make sure the WebView2 runtime is present (Windows 11 has it built in; the build machine may not)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          if (Test-Path $key) { "WebView2 runtime " + (Get-ItemProperty $key).pv }
+          else {
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile wv2setup.exe
+            Start-Process .\wv2setup.exe -ArgumentList '/silent','/install' -Wait
+            "installed WebView2 runtime"
+          }
+
+      - name: Self-test (screenshots and report)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force selftest | Out-Null
+          $p = Start-Process -FilePath out\Glassify.exe -ArgumentList '--selftest', "$pwd\selftest" -PassThru
+          if (-not $p.WaitForExit(150000)) { $p.Kill(); "self-test timed out" | Out-File selftest\timeout.txt }
+          Get-ChildItem selftest | Format-Table Name, Length
+          if (Test-Path selftest\report.txt) { Get-Content selftest\report.txt }
+
+      - name: Save the results on the ci-results branch
+        shell: bash
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir results && cd results && git init -q && git checkout -q -b ci-results
+          cp -r ../selftest/* . 2>/dev/null || true
+          echo "$GITHUB_SHA" > commit.txt
+          git add -A
+          git -c user.name=glassify-ci -c user.email=glassify-ci@users.noreply.github.com commit -qm "self-test results for $GITHUB_SHA"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-results
+
+      - name: Publish Glassify.exe as the latest download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest out/Glassify.exe --target "$GITHUB_SHA" --title "Glassify for Windows" \
+            --notes "Download Glassify.exe below and double-click it. Needs Windows 10 (version 2004 or later) or Windows 11, and the Spotify desktop app. Right-click the glass (or its icon near the clock) to quit."

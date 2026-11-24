@@ -450,11 +450,11 @@ sealed partial class WidgetForm : Form
         switch (s)
         {
             case PlayState.Playing:
-                stopAudioTimer.Stop(); audio.SetWanted(true); StartTicker(); SetPlaying(true);
+                stopAudioTimer.Stop(); audio.SetWanted(true, spotify.Source); StartTicker(); SetPlaying(true);
                 break;
             case PlayState.Unknown:
                 // Spotify is open but Windows does not say what it is doing: listen, and let the sound itself decide
-                stopAudioTimer.Stop(); audio.SetWanted(true); StartTicker();
+                stopAudioTimer.Stop(); audio.SetWanted(true, spotify.Source); StartTicker();
                 break;
             default:
                 tickerOn = false; spectrum.Reset(); SetPlaying(false);

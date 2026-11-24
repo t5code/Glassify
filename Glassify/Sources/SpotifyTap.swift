@@ -1,8 +1,8 @@
 import CoreAudio
 import Foundation
 
-/// Listens to the sound Spotify itself produces, using a Core Audio process tap (macOS 14.2+).
-/// The tap sits on Spotify's output before it reaches any device, so speakers, wired or Bluetooth headphones
+/// Listens to the sound the music apps themselves produce (Spotify and Apple Music), using a Core Audio process tap
+/// (macOS 14.2+). The tap sits on their output before it reaches any device, so speakers, wired or Bluetooth headphones
 /// all behave the same, and nothing else playing on the Mac is heard.
 /// Flow, as Apple documents it: CATapDescription -> AudioHardwareCreateProcessTap -> a private aggregate device
 /// whose tap list holds the tap -> an IO proc on that device.
@@ -86,7 +86,7 @@ final class SpotifyTap {
         // borrow the clock of the current output device.
         if !build(procs, clockFromOutput: false) && !build(procs, clockFromOutput: true) {
             failedFor = procs
-            note("could not listen to Spotify's sound")
+            note("could not listen to the music app's sound")
         }
     }
 
@@ -143,7 +143,7 @@ final class SpotifyTap {
         guard err == noErr else { trace("start failed \(err) clockFromOutput=\(clockFromOutput)"); teardown(); return false }
         os_unfair_lock_lock(&lock); running = true; os_unfair_lock_unlock(&lock)
         tapped = procs
-        note("listening to Spotify's sound (\(Int(sampleRate)) Hz, \(tapChannels) ch\(clockFromOutput ? ", output clock" : ""))")
+        note("listening to the music app's sound (\(Int(sampleRate)) Hz, \(tapChannels) ch\(clockFromOutput ? ", output clock" : ""))")
         return true
     }
 
@@ -241,7 +241,30 @@ final class SpotifyTap {
         os_unfair_lock_unlock(&lock)
     }
 
-    // MARK: - finding Spotify
+    // MARK: - finding the music apps
+
+    /// Is the app with this bundle id sending sound to an output right now? nil when the audio system does not know the app.
+    static func isOutputRunning(bundleID: String) -> Bool? {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr, size > 0 else { return nil }
+        var all = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &all) == noErr else { return nil }
+        var known = false
+        for obj in all {
+            var a = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyBundleID, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            var s: Unmanaged<CFString>?
+            var n = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(obj, &a, 0, nil, &n, &s) == noErr, let id = s?.takeRetainedValue() as String?, id == bundleID || id.hasPrefix(bundleID + ".") else { continue }
+            known = true
+            a.mSelector = kAudioProcessPropertyIsRunningOutput
+            var running: UInt32 = 0
+            n = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(obj, &a, 0, nil, &n, &running) == noErr, running != 0 { return true }
+        }
+        return known ? false : nil
+    }
+
 
     static func spotifyProcessObjects() -> [AudioObjectID] {
         var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -254,7 +277,7 @@ final class SpotifyTap {
             var s: Unmanaged<CFString>?
             var n = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             guard AudioObjectGetPropertyData(obj, &a, 0, nil, &n, &s) == noErr, let id = s?.takeRetainedValue() as String? else { return false }
-            return id == "com.spotify.client" || id.hasPrefix("com.spotify.client.")
+            return id == "com.spotify.client" || id.hasPrefix("com.spotify.client.") || id == "com.apple.Music" || id.hasPrefix("com.apple.Music.")
         }.sorted()
     }
 }

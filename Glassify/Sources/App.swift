@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     lazy var capture = ScreenCapture(store: frames)
     let tap = SpotifyTap()
     let spectrum = Spectrum()
-    let spotify = Spotify()
+    let spotify = NowPlaying()
     var link: CADisplayLink?
 
     // what the page last told us about its layout (points)
@@ -53,8 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false                       // the glass draws its own shadow
-        panel.level = .floating
-        panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isMovableByWindowBackground = false
@@ -62,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.ignoresMouseEvents = true               // until the mouse is over the glass itself
+        // Pinned in front: one step below the menu bar, which is above ordinary windows, other apps' floating palettes
+        // (After Effects and friends raise theirs when they become active) and the Dock; menus still open over it.
+        // (Set last: marking a panel as "floating" would put it back on the ordinary floating level.)
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) - 1)
 
         let root = FlippedView(frame: NSRect(origin: .zero, size: panel.frame.size))
         root.wantsLayer = true
@@ -314,7 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     // MARK: - Spotify -> page
 
-    func spotifyChanged(_ s: Spotify.State) {
+    func spotifyChanged(_ s: NowPlaying.State) {
         switch s {
         case .playing:
             tap.setWanted(true); link?.isPaused = false; setPlaying(true)

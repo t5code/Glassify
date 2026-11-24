@@ -4,8 +4,9 @@ namespace Glassify;
 
 enum PlayState { NotRunning, Unknown, Playing, Paused }
 
-/// Reads what the Spotify desktop app is playing from Windows' own media controls (the same source as the volume
+/// Reads what the Spotify or Apple Music app is playing from Windows' own media controls (the same source as the volume
 /// flyout and the lock screen). No login, no developer account: title, artist, cover and play/pause all come from there.
+/// Whichever of the two is playing is the one shown.
 sealed class SpotifyInfo
 {
     public event Action<PlayState>? StateChanged;
@@ -16,6 +17,10 @@ sealed class SpotifyInfo
     GlobalSystemMediaTransportControlsSession? session;
     string trackKey = "\u0001";
     int generation;
+    readonly Dictionary<string, GlobalSystemMediaTransportControlsSession> hooked = new();
+
+    /// Is this entry in Windows' media controls one of the music apps the widget follows?
+    static bool IsPlayer(string id) => id.Contains("Spotify", StringComparison.OrdinalIgnoreCase) || id.Contains("AppleMusic", StringComparison.OrdinalIgnoreCase) || id.Contains("iTunes", StringComparison.OrdinalIgnoreCase);
 
     public PlayState State { get; private set; } = PlayState.NotRunning;
     public (string title, string artist, string? cover)? Last { get; private set; }
@@ -29,28 +34,42 @@ sealed class SpotifyInfo
             manager.SessionsChanged += (_, _) => Pick();
             Pick();
         }
-        catch { Publish(SpotifyAudio.SpotifyPid() != 0 ? PlayState.Unknown : PlayState.NotRunning); }
+        catch { Publish(SpotifyAudio.AnyPlayerRunning() ? PlayState.Unknown : PlayState.NotRunning); }
     }
 
-    /// Spotify can be open without Windows listing it yet; the window calls this now and then.
-    public void Poll() { if (manager != null && session == null) Pick(); else if (manager == null) Publish(SpotifyAudio.SpotifyPid() != 0 ? PlayState.Unknown : PlayState.NotRunning); }
+    /// A music app can be open without Windows listing it yet; the window calls this now and then.
+    public void Poll() { if (manager != null && session == null) Pick(); else if (manager == null) Publish(SpotifyAudio.AnyPlayerRunning() ? PlayState.Unknown : PlayState.NotRunning); }
 
     void Pick()
     {
         if (manager == null) return;
-        GlobalSystemMediaTransportControlsSession? found = null;
-        try { found = manager.GetSessions().FirstOrDefault(s => s.SourceAppUserModelId.Contains("Spotify", StringComparison.OrdinalIgnoreCase)); } catch { }
-        if (found?.SourceAppUserModelId == session?.SourceAppUserModelId && found != null) { Refresh(); return; }
-        session = found;
+        List<GlobalSystemMediaTransportControlsSession> all;
+        try { all = manager.GetSessions().Where(s => IsPlayer(s.SourceAppUserModelId)).ToList(); } catch { all = new(); }
+        lock (hooked)
+        {
+            foreach (var gone in hooked.Keys.Where(k => all.All(s => s.SourceAppUserModelId != k)).ToList()) hooked.Remove(gone);
+            foreach (var s in all)
+            {
+                if (hooked.ContainsKey(s.SourceAppUserModelId)) continue;
+                hooked[s.SourceAppUserModelId] = s;
+                s.PlaybackInfoChanged += (_, _) => Pick();           // the other app may have started playing
+                s.MediaPropertiesChanged += (x, _) => { if (x.SourceAppUserModelId == session?.SourceAppUserModelId) Refresh(); };
+            }
+        }
+        bool Playing(GlobalSystemMediaTransportControlsSession s) { try { return s.GetPlaybackInfo()?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; } catch { return false; } }
+        // the app that is playing wins; otherwise stay with the one already shown
+        var found = all.FirstOrDefault(Playing) ?? all.FirstOrDefault(s => s.SourceAppUserModelId == session?.SourceAppUserModelId) ?? all.FirstOrDefault();
         if (found == null)
         {
+            if (session == null && State != PlayState.Playing && State != PlayState.Paused) { Publish(SpotifyAudio.AnyPlayerRunning() ? PlayState.Unknown : PlayState.NotRunning); return; }
+            session = null;
             generation++; trackKey = "\u0001"; Last = null;
-            Publish(SpotifyAudio.SpotifyPid() != 0 ? PlayState.Unknown : PlayState.NotRunning);
+            Publish(SpotifyAudio.AnyPlayerRunning() ? PlayState.Unknown : PlayState.NotRunning);
             TrackChanged?.Invoke("", "", null);
             return;
         }
-        found.MediaPropertiesChanged += (s, _) => { if (s == session) Refresh(); };
-        found.PlaybackInfoChanged += (s, _) => { if (s == session) Refresh(); };
+        if (found.SourceAppUserModelId != session?.SourceAppUserModelId) trackKey = "\u0001";
+        session = found;
         Refresh();
     }
 

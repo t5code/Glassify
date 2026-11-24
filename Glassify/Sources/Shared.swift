@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import os
 
 /// Room around the glass inside the transparent window, so the page's own drop shadow has somewhere to fall.
 /// These match `.widget{left:56px;top:32px}` in Web/index.html.
@@ -8,8 +9,12 @@ let PADT: CGFloat = 32
 let PADB: CGFloat = 80
 let ASPECT: CGFloat = 4.6
 
+private let glassifyLog = Logger(subsystem: "app.glassify.widget", category: "app")
+
+/// A few plain status lines in the system log (Console.app, subsystem app.glassify.widget). Never track names.
 func note(_ s: @autoclosure () -> String) {
-    NSLog("Glassify: %@", s())
+    let text = s()
+    glassifyLog.notice("\(text, privacy: .public)")
 }
 
 func trace(_ s: @autoclosure () -> String) {

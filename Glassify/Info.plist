@@ -15,7 +15,7 @@
 	<key>LSUIElement</key><true/>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSPrincipalClass</key><string>NSApplication</string>
-	<key>NSAudioCaptureUsageDescription</key><string>Glassify listens to the sound Spotify is playing so its glass bars can move with the music. Nothing is recorded or saved.</string>
-	<key>NSAppleEventsUsageDescription</key><string>Glassify asks Spotify for the title, artist and cover of the track that is playing.</string>
+	<key>NSAudioCaptureUsageDescription</key><string>Glassify listens to the sound Spotify or Music is playing so its glass bars can move with the music. Nothing is recorded or saved.</string>
+	<key>NSAppleEventsUsageDescription</key><string>Glassify asks Spotify or Music for the title, artist and cover of the track that is playing.</string>
 </dict>
 </plist>

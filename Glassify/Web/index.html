@@ -1,0 +1,661 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Glassify</title>
+<script>/*GLASSIFY_SETTINGS*/</script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: the window is see-through and holds only the glass, with room around it for its shadow. Single dark look on purpose: the widget lives over an editor. */
+:root{
+  color-scheme:dark;
+  --ground:#0a0b0f; --panel:#12141a; --panel-2:#191c24; --line:#252935;
+  --ink:#e8ebf1; --ink-dim:#8f97a8; --accent:#7fe3d4; --accent-ink:#06211d;
+  --display:"Space Grotesk","Avenir Next","Segoe UI",sans-serif;
+  --body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+body{color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.5;user-select:none;-webkit-user-select:none}
+[hidden]{display:none!important}
+
+/* ---------- the glass ---------- */
+.widget{--rad:var(--r0,65px);position:absolute;left:56px;top:32px;width:calc(600px*var(--scale,1));
+  border-radius:var(--rad);overflow:hidden;transition:border-radius .6s var(--ease);
+  box-shadow:0 24px 54px rgba(0,0,0,.36),0 6px 16px rgba(0,0,0,.26)}
+.widget.open{--rad:30px}
+.widget canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.widget::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  box-shadow:inset 0 1px .5px rgba(255,255,255,.6),inset 0 -1px .5px rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.09),
+    inset 0 12px 18px -12px rgba(255,255,255,.28),inset 0 -16px 22px -14px rgba(0,0,0,.45)}
+.strip{position:relative;aspect-ratio:4.6;touch-action:none}
+.grab{position:absolute;top:0;left:50%;width:64px;height:22px;margin-left:-32px;padding:0;border:0;border-radius:99px;background:transparent;cursor:grab;touch-action:none;opacity:.5;
+  transform-origin:50% 40%;transition:transform .5s var(--ease),opacity .35s ease}
+.grab::before{content:"";position:absolute;left:50%;top:7px;width:36px;height:4px;margin-left:-18px;border-radius:99px;background:#fff;box-shadow:0 0 5px rgba(0,0,0,.4)}
+.grab:hover,.grab:focus-visible,.widget.moving .grab{transform:scale(1.28);opacity:1;border:0}
+.widget.moving .grab{cursor:grabbing}
+.meta{position:absolute;top:max(14px,13%);left:0;right:0;text-align:center;font-size:10.5px;letter-spacing:.06em;color:rgba(255,255,255,.92);
+  text-shadow:0 1px 6px rgba(0,0,0,.6);opacity:0;transition:opacity .6s;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 18%}
+.meta b{font-weight:600}.meta span{opacity:.7}
+.strip:hover .meta,.meta.show{opacity:1}
+.dots{position:absolute;bottom:2%;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:5px;padding:8px 14px;background:none;border:0;border-radius:99px;cursor:pointer;opacity:.6;transition:opacity .35s ease,transform .5s var(--ease)}
+.dots:hover,.dots:focus-visible{opacity:1;transform:translateX(-50%) scale(1.18);border:0}
+.dots i{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.35);transition:all .3s}
+.dots i.on{background:#fff;width:14px}
+.plus{position:absolute;left:5.9%;top:28%;width:26px;height:26px;margin:-13px 0 0 -13px;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer;opacity:.62;
+  transition:transform .5s var(--ease),opacity .35s ease}
+.plus::before,.plus::after{content:"";position:absolute;left:50%;top:50%;width:11px;height:1.5px;margin:-.75px 0 0 -5.5px;border-radius:1px;background:#fff;box-shadow:0 0 5px rgba(0,0,0,.45)}
+.plus::after{transform:rotate(90deg)}
+.plus:hover,.plus:focus-visible{transform:scale(1.32);opacity:1;border:0}
+.plus[aria-expanded="true"]{transform:rotate(45deg)}
+.plus[aria-expanded="true"]:hover,.plus[aria-expanded="true"]:focus-visible{transform:rotate(45deg) scale(1.32)}
+.grip{position:absolute;right:calc(var(--rad)*.293 + 7px);bottom:calc(var(--rad)*.293 + 7px);width:22px;height:22px;margin:0 -6px -6px 0;padding:0;border:0;border-radius:6px;background:transparent;
+  cursor:nwse-resize;touch-action:none;opacity:.5;transition:transform .5s var(--ease),opacity .35s ease,right .6s var(--ease),bottom .6s var(--ease)}
+.grip svg{display:block;width:11px;height:11px;margin:5.5px;filter:drop-shadow(0 0 3px rgba(0,0,0,.45))}
+.grip:hover,.grip:focus-visible,.widget.resizing .grip{transform:scale(1.32);opacity:1;border:0}
+.widget.resizing,.widget.resizing .grip{transition:none}
+/* app: the small controls stay out of sight until the mouse is over the glass (or the settings are open, or one of them is in use) */
+.widget:not(:hover):not(.open):not(.moving):not(.resizing):not(:has(:focus-visible)) :is(.grab,.plus,.dots,.grip){opacity:0}
+.nogl{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:0 20px;font-size:12px;color:var(--ink)}
+
+/* ---------- base controls ---------- */
+button{font:inherit;font-size:13px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+button:hover{border-color:#3a4050}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+
+/* ---------- settings drawer inside the glass ---------- */
+.drawer{position:relative;height:0;overflow:hidden;transition:height .6s var(--ease)}
+.panel{padding:4px 26px 22px;display:flex;flex-direction:column;gap:12px;color:#fff;font-size:12px;
+  opacity:0;transform:translateY(-8px);transition:opacity .3s ease,transform .6s var(--ease)}
+.widget.open .panel{opacity:1;transform:none;transition-delay:.1s}
+.psec{display:flex;flex-direction:column;gap:11px}
+.prow{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.panel button{font-size:12px;padding:5px 11px;border-radius:99px;color:#fff;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.22);text-shadow:0 1px 3px rgba(0,0,0,.35)}
+.panel button:hover{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.4)}
+.panel button:focus-visible,.panel input:focus-visible{outline-color:#fff}
+.panel button[aria-pressed="true"]{background:rgba(255,255,255,.92);border-color:transparent;color:#0b0d12;font-weight:600;text-shadow:none}
+.panel .tabs{padding-bottom:2px}
+.panel .sep{width:1px;height:20px;background:rgba(255,255,255,.3);margin:0 3px}
+.panel .tiny{font-size:11px;color:rgba(255,255,255,.75);text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.panel input[type=color]{width:26px;height:26px;padding:0;border:1px solid rgba(255,255,255,.55);border-radius:50%;background:none;cursor:pointer;overflow:hidden}
+.panel input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.panel input[type=color]::-webkit-color-swatch{border:0;border-radius:50%}
+.sliders{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 24px}
+.sl{display:grid;grid-template-columns:66px 1fr 40px;gap:10px;align-items:center;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.sl output{color:rgba(255,255,255,.78);font-variant-numeric:tabular-nums;text-align:right;font-size:11px}
+input[type=range]{width:100%;accent-color:#fff;min-width:0}
+@media (prefers-reduced-motion:reduce){.meta,.dots,.dots i,.plus,.grip,.grab,.drawer,.panel,.widget{transition:none}}
+</style>
+
+<div class="widget" id="widget">
+  <canvas id="gl"></canvas>
+  <div class="strip" id="strip">
+    <div class="meta" id="meta"><b id="mTitle"></b> <span id="mArtist"></span></div>
+    <button class="grab" id="grab" type="button" aria-label="Move. Drag, or use the arrow keys."></button>
+    <button class="dots" id="dots" type="button" aria-label="Switch mode"></button>
+    <button class="plus" id="btnSettings" type="button" aria-label="Settings" aria-expanded="false" aria-controls="drawer"></button>
+  </div>
+  <div class="drawer" id="drawer">
+    <div class="panel" id="panel">
+      <div class="prow tabs" id="modeRow" role="group" aria-label="Mode"></div>
+      <div class="psec" id="sec-drift">
+        <div class="prow" id="shapeRow" role="group" aria-label="Shapes"></div>
+        <div class="prow" id="swRow"></div>
+        <div class="prow" id="palRow" role="group" aria-label="Colour presets"></div>
+        <div class="sliders" id="slDrift"></div>
+      </div>
+      <div class="psec" id="sec-vinyl" hidden><div class="sliders" id="slVinyl"></div></div>
+      <div class="psec" id="sec-clear" hidden><div class="sliders" id="slClear"></div></div>
+    </div>
+  </div>
+  <button class="grip" id="grip" type="button" aria-label="Resize. Drag, or use the arrow keys."><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M9.5 3.5V9.5H3.5Z" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg></button>
+</div>
+
+<script>
+(function(){
+'use strict';
+const $ = id => document.getElementById(id);
+const ASPECT = 4.6, SW = 384, SH = Math.round(SW/ASPECT), ROWS = 6, SHF = SH*ROWS;
+const widget=$('widget'), strip=$('strip'), drawer=$('drawer'), panel=$('panel');
+/* the one channel to the app around this page */
+function post(t,body){ try{ window.webkit.messageHandlers.glassify.postMessage(Object.assign({t:t},body||{})); }catch(e){} }
+
+/* ================= settings ================= */
+const PALETTES = {
+  Lagoon:{bg:'#06111b',c:['#19d3c5','#2b7bff','#8a5cff','#ff5fa2','#ffd166']},
+  Ember:{bg:'#140707',c:['#ff5a36','#ff9f1c','#ffd23f','#e63973','#7b2cbf']},
+  Aurora:{bg:'#050b14',c:['#5eead4','#38bdf8','#a78bfa','#f472b6','#34d399']},
+  Candy:{bg:'#12061a',c:['#ff4ecd','#ffb86b','#7afcff','#b388ff','#fff275']},
+  Mono:{bg:'#09090b',c:['#ffffff','#b9c0cc','#6b7280','#e5e7eb','#9ca3af']}
+};
+const SHAPES = ['circle','ring','square','triangle','star','plus'];
+const MODES = [{id:'drift',name:'Drift'},{id:'vinyl',name:'Vinyl'},{id:'clear',name:'Clear'}];
+/* N, angle, wave, react and tint are the bar look. They are fixed for users; only background settings are exposed. */
+const DEF = {mode:0,N:24,angle:18,wave:1,react:1,tint:0.5,count:9,size:1,speed:1,blur:1,
+  scale:1,vSpin:1,vDim:0.36,cBlur:0.7,cFrost:0.3,cWarp:1,
+  types:['circle','square','triangle'],bg:PALETTES.Lagoon.bg,colors:PALETTES.Lagoon.c.slice()};
+let S = Object.assign({}, DEF);
+try{ const raw = localStorage.getItem('glasswake.v1'); if(raw) S = Object.assign(S, JSON.parse(raw)); }catch(e){}
+if(!(S.mode>=0 && S.mode<MODES.length)) S.mode = 0;
+if(!Array.isArray(S.types) || !S.types.length) S.types = DEF.types.slice();
+if(!Array.isArray(S.colors) || S.colors.length!==5) S.colors = DEF.colors.slice();
+if(!(S.cBlur>=0.3)) S.cBlur=0.3;
+if(typeof S.vBlur!=='number') S.vBlur = Math.round(S.blur*0.8*100)/100;
+if(!(S.scale>=0.5&&S.scale<=1.6)) S.scale=1;
+const save = () => { const j=JSON.stringify(S); try{ localStorage.setItem('glasswake.v1', j); }catch(e){} post('save',{json:j}); };
+
+/* ================= audio =================
+   The app listens to Spotify's own sound and sends one energy value per bar, shaped the same way the preview shaped a played song. */
+const ext=new Float32Array(40);
+let playing=false;
+
+/* ================= covers ================= */
+function rng(seed){ let a=seed>>>0; return ()=>{ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+/* stands in for the cover in Vinyl until Spotify has a track, or when a track has no cover */
+const noCover=document.createElement('canvas'); noCover.width=noCover.height=256;
+{ const x=noCover.getContext('2d'), g=x.createLinearGradient(0,0,256,256); g.addColorStop(0,'#262a33'); g.addColorStop(1,'#0c0d11'); x.fillStyle=g; x.fillRect(0,0,256,256); }
+let cover=noCover, coverPrev=null, coverFade=1, metaTimer=0;
+function setTrack(title,artist,img){
+  coverPrev=cover; cover=img; coverFade=0;
+  $('mTitle').textContent=title; $('mArtist').textContent=artist?'· '+artist:'';
+  const m=$('meta'); m.classList.add('show'); clearTimeout(metaTimer); metaTimer=setTimeout(()=>m.classList.remove('show'),3800);
+}
+
+
+/* ================= what is behind the glass (Clear mode) =================
+   The app photographs the screen under the widget, without the widget in it, and hands the pixels over.
+   backRows says how many strip-heights of screen the picture covers, starting at the top edge of the glass. */
+const back=document.createElement('canvas'); back.width=back.height=2; const bkx=back.getContext('2d');
+bkx.fillStyle='#0d0e13'; bkx.fillRect(0,0,2,2);
+let backRows=1, pulling=false, pullAgain=false, wantBack=false;
+function pullFrame(){
+  if(pulling){ pullAgain=true; return; } pulling=true;
+  const done=()=>{ pulling=false; if(pullAgain){ pullAgain=false; pullFrame(); } };
+  const x=new XMLHttpRequest(); x.open('GET','frame'); x.responseType='arraybuffer';
+  x.onload=()=>{
+    const w=+x.getResponseHeader('X-W'), h=+x.getResponseHeader('X-H'), rows=+x.getResponseHeader('X-Rows');
+    if(x.status===200&&w>0&&h>0&&x.response&&x.response.byteLength===w*h*4){
+      if(back.width!==w||back.height!==h){ back.width=w; back.height=h; }
+      bkx.putImageData(new ImageData(new Uint8ClampedArray(x.response),w,h),0,0); backRows=rows;
+    }
+    done();
+  };
+  x.onerror=done; x.send();
+}
+
+/* ================= background scene (drawn small, blurred on the GPU) =================
+   The scene is ROWS strips tall: the top strip sits behind the bars, the rest is what shows behind the settings when the glass opens. */
+const scene=document.createElement('canvas'); scene.width=SW; scene.height=SHF; const sx=scene.getContext('2d');
+const tmp=document.createElement('canvas'); tmp.width=SW; tmp.height=SHF; const tx=tmp.getContext('2d');
+const mid2=document.createElement('canvas'); mid2.width=SW*2; mid2.height=SHF*2; const mid2x=mid2.getContext('2d');
+const mids=[0,1,2].map(()=>document.createElement('canvas'));
+let shapes=[], paneRows=1;
+function buildShapes(){
+  const r=rng(7); shapes=[];
+  const mk=(i,y0,yr)=>({x:-0.1+r()*1.2,y:y0+r()*yr,vx:(r()-.5)*2,vy:(r()-.5),r:0.38+r()*0.5,rot:r()*6.28,vr:(r()-.5)*0.5,ci:i%5,ti:i,ph:r()*6.28});
+  for(let i=0;i<S.count;i++) shapes.push(mk(i,-0.3,1.6));
+  const extra=Math.round(S.count*6.2/1.6); for(let i=0;i<extra;i++) shapes.push(mk(S.count+i,1.3,6.2));
+}
+function shapePath(c,type,r){
+  c.beginPath();
+  if(type==='circle'||type==='ring'){ c.arc(0,0,r,0,6.2832); }
+  else if(type==='square'){ c.rect(-r*0.85,-r*0.85,r*1.7,r*1.7); }
+  else if(type==='triangle'){ for(let k=0;k<3;k++){ const a=-1.5708+k*2.0944; c[k?'lineTo':'moveTo'](Math.cos(a)*r*1.15,Math.sin(a)*r*1.15); } c.closePath(); }
+  else if(type==='star'){ for(let k=0;k<10;k++){ const a=-1.5708+k*0.62832, q=k%2?r*0.5:r*1.15; c[k?'lineTo':'moveTo'](Math.cos(a)*q,Math.sin(a)*q); } c.closePath(); }
+  else { const w=r*0.38; c.rect(-r,-w,2*r,2*w); c.rect(-w,-r,2*w,2*r); }
+}
+function drawDrift(c,dt,level){
+  c.globalAlpha=1; c.fillStyle=S.bg; c.fillRect(0,0,SW,SHF);
+  const yMax=(paneRows+1.2);
+  for(const s of shapes){
+    s.x+=s.vx*S.speed*dt*0.028; s.y+=s.vy*S.speed*dt*0.09; s.rot+=s.vr*S.speed*dt;
+    if(s.x<-0.25) s.x+=1.5; if(s.x>1.25) s.x-=1.5; if(s.y<-0.9) s.y+=8.6; if(s.y>7.7) s.y-=8.6;
+    if(s.y>yMax) continue;
+    const type=S.types[s.ti%S.types.length], r=s.r*S.size*SH*(1+level*0.16);
+    c.save(); c.translate(s.x*SW,s.y*SH); c.rotate(s.rot); c.globalAlpha=0.9; shapePath(c,type,r);
+    if(type==='ring'){ c.strokeStyle=S.colors[s.ci]; c.lineWidth=r*0.36; c.stroke(); } else { c.fillStyle=S.colors[s.ci]; c.fill(); }
+    c.restore();
+  }
+}
+let spin=0, spinVel=0;
+function drawVinyl(c,dt){
+  spinVel+=((playing?0.42*S.vSpin:0)-spinVel)*Math.min(1,dt*1.2); spin+=spinVel*dt;
+  const d=2*Math.hypot(SW/2,(Math.min(ROWS,paneRows)-0.5)*SH)*1.04;   /* grows just enough to stay behind the settings */
+  c.globalAlpha=1; c.fillStyle='#050506'; c.fillRect(0,0,SW,SHF);
+  c.save(); c.translate(SW/2,SH/2); c.rotate(spin);
+  if(coverPrev && coverFade<1){ c.drawImage(coverPrev,-d/2,-d/2,d,d); c.globalAlpha=coverFade; }
+  c.drawImage(cover,-d/2,-d/2,d,d); c.restore();
+  c.globalAlpha=1; c.fillStyle='rgba(0,0,0,'+S.vDim+')'; c.fillRect(0,0,SW,SHF);
+}
+function drawClear(c){
+  /* whatever is behind the glass: a live picture of the screen */
+  /* Fine detail (thin lines, text) must be averaged down, not skipped over, or it shimmers as it moves:
+     so shrink by halves until it is twice the scene size, then one exact 2:1 step. */
+  const rows=backRows;
+  let src=back, sxp=0, syp=0, cw=back.width, ch=back.height, i=0;
+  const tw=SW*2, thh=SHF*2*rows/ROWS;
+  while(cw>tw*2&&i<3){ const m=mids[i++], nw=Math.ceil(cw/2), nh=Math.ceil(ch/2);
+    if(m.width<nw||m.height<nh){ m.width=Math.max(m.width,nw); m.height=Math.max(m.height,nh); }
+    const mx=m.getContext('2d'); mx.imageSmoothingQuality='high'; mx.fillStyle='#0d0e13'; mx.fillRect(0,0,nw,nh);
+    mx.drawImage(src,sxp,syp,cw,ch,0,0,nw,nh); src=m; sxp=0; syp=0; cw=nw; ch=nh; }
+  mid2x.imageSmoothingQuality='high'; mid2x.fillStyle='#0d0e13'; mid2x.fillRect(0,0,SW*2,SHF*2);
+  mid2x.drawImage(src,sxp,syp,cw,ch,0,0,tw,thh);
+  c.globalAlpha=1; c.imageSmoothingQuality='high'; c.drawImage(mid2,0,0,SW,SHF);
+}
+const drawMode=(i,c,dt,level)=>{ const id=MODES[i].id; if(id==='vinyl') drawVinyl(c,dt); else if(id==='clear') drawClear(c); else drawDrift(c,dt,level); };
+const blurOf=i=>{ const id=MODES[i].id; return id==='vinyl'?S.vBlur:id==='clear'?S.cBlur:S.blur; };
+let clearMix=MODES[S.mode].id==='clear'?1:0, modePrev=S.mode, modeMix=1;
+function setMode(i){
+  if(i===S.mode) return; modePrev=S.mode; S.mode=i; modeMix=0; save(); syncModeUI();
+}
+
+/* ================= WebGL ================= */
+const canvas=$('gl');
+const gl=canvas.getContext('webgl',{alpha:true,premultipliedAlpha:true,antialias:false,powerPreference:'low-power'});
+const VS='attribute vec2 a;varying vec2 vUv;void main(){vUv=a*0.5+0.5;gl_Position=vec4(a,0.,1.);}';
+const FS_BLUR=`precision mediump float;varying vec2 vUv;uniform sampler2D uT;uniform vec2 uDir;
+void main(){vec4 c=texture2D(uT,vUv)*0.1964825501511404;
+c+=(texture2D(uT,vUv+uDir*1.411764705882353)+texture2D(uT,vUv-uDir*1.411764705882353))*0.2969069646728344;
+c+=(texture2D(uT,vUv+uDir*3.2941176470588234)+texture2D(uT,vUv-uDir*3.2941176470588234))*0.09447039785044732;
+c+=(texture2D(uT,vUv+uDir*5.176470588235294)+texture2D(uT,vUv-uDir*5.176470588235294))*0.010381362401148057;
+gl_FragColor=c;}`;
+const FS_MAIN=`precision highp float;
+varying vec2 vUv;
+uniform vec2 uRes; uniform float uStrip,uRadPx,uWarp,uFrost,uAspect,uN,uCell,uBW,uBD,uRad,uPitch,uYM,uTime,uLevel,uTint,uClear;
+uniform sampler2D uBg,uData;
+const float DIST=16.0; const float ZB=1.25; const float IOR=1.47; const float ROWS=6.0;
+float gBarX,gBarY,gBarH,gBarI;
+void barData(float i){
+  vec4 d=texture2D(uData,vec2((i+0.5)/uN,0.25)); gBarI=i;
+  gBarH=(d.r*65280.0+d.g*255.0)/65535.0;
+  gBarY=(d.b*65280.0+d.a*255.0)/65535.0-0.5;
+  gBarX=(i-(uN-1.0)*0.5)*uCell;
+}
+float sdRB(vec3 p,vec3 b,float r){vec3 q=abs(p)-b+r;return length(max(q,0.0))+min(max(q.x,max(q.y,q.z)),0.0)-r;}
+float mapNear(vec3 p){
+  barData(clamp(floor(p.x/uCell+uN*0.5),0.0,uN-1.0));
+  return sdRB(p-vec3(gBarX,gBarY,0.0),vec3(uBW,gBarH,uBD),uRad);
+}
+vec3 nrm(vec3 q,vec3 e){
+  vec2 h=vec2(0.0015,0.0);
+  return normalize(vec3(sdRB(q+h.xyy,e,uRad)-sdRB(q-h.xyy,e,uRad),sdRB(q+h.yxy,e,uRad)-sdRB(q-h.yxy,e,uRad),sdRB(q+h.yyx,e,uRad)-sdRB(q-h.yyx,e,uRad)));
+}
+/* background lookup in strip space: x 0..1 across; y is 1 at the top of the bar strip, 0 at its bottom, negative under it (settings area) */
+vec3 bg(vec2 uv){
+  vec3 c=texture2D(uBg,clamp(vec2(uv.x,1.0-(1.0-uv.y)/ROWS),0.002,0.998)).rgb;
+  return mix(c,vec3(0.92),uFrost);
+}
+float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
+float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+  return mix(mix(hash12(i),hash12(i+vec2(1.0,0.0)),f.x),mix(hash12(i+vec2(0.0,1.0)),hash12(i+vec2(1.0,1.0)),f.x),f.y);}
+void main(){
+  float cp=cos(uPitch),sp=sin(uPitch);
+  vec3 ro=vec3(0.0,-DIST*sp,-DIST*cp), f=vec3(0.0,sp,cp), up=vec3(0.0,cp,-sp);
+  vec2 sUv=vec2(vUv.x,1.0-uRes.y*(1.0-vUv.y)/uStrip);
+  vec2 sc=vec2((sUv.x*2.0-1.0)*uAspect,sUv.y*2.0-1.0);
+  vec3 rd=normalize(f*DIST+vec3(sc.x,0.0,0.0)+up*sc.y);
+  float px=2.0/uStrip;
+
+  /* the pane itself: thick glass bends the picture near its rim */
+  vec2 pp=(vUv-0.5)*uRes; vec2 qd=abs(pp)-(uRes*0.5-uRadPx);
+  float dEdge=length(max(qd,0.0))+min(max(qd.x,qd.y),0.0)-uRadPx;
+  vec2 eDir=((qd.x>0.0&&qd.y>0.0)?normalize(qd):(qd.x>qd.y?vec2(1.0,0.0):vec2(0.0,1.0)))*sign(pp);
+  float lip=smoothstep(-uStrip*0.21,0.0,dEdge);
+  vec2 uvP=sUv-eDir*lip*lip*vec2(0.105/uAspect,0.105)*uWarp;
+
+  vec3 hp=ro+rd*((ZB-ro.z)/rd.z);
+  vec3 col=bg(uvP);
+
+  /* soft shadow the bars leave on the pane behind them */
+  vec3 p0=ro+rd*(-ro.z/rd.z);
+  float i0=floor((p0.x-0.03)/uCell+uN*0.5), sh=0.0, reach=min(0.28,uCell*1.1);
+  vec3 halo=vec3(0.0);
+  for(int k=-1;k<=1;k++){
+    float ii=i0+float(k); if(ii<0.0||ii>uN-1.0) continue;
+    barData(ii);
+    vec2 dq=abs(p0.xy-vec2(gBarX+0.03,gBarY-0.07))-vec2(uBW,gBarH);
+    float d2=length(max(dq,0.0))+min(max(dq.x,dq.y),0.0);
+    float fo=1.0-smoothstep(-0.04,reach,d2); sh=max(sh,fo*fo);
+    vec4 gp=texture2D(uData,vec2((ii+0.5)/uN,0.75)); halo=max(halo,gp.rgb*gp.a*fo);
+  }
+  col*=1.0-0.17*sh; col+=halo*0.2;
+
+  /* march the row of bars */
+  vec3 bmin=vec3(-uN*uCell*0.5,-uYM,-uBD), bmax=-bmin;
+  vec3 t0=(bmin-ro)/rd, t1=(bmax-ro)/rd; vec3 tmn=min(t0,t1), tmx=max(t0,t1);
+  float tN=max(tmn.x,max(tmn.y,tmn.z)), tF=min(tmx.x,min(tmx.y,tmx.z));
+  float hit=0.0, minD=1e3;
+  if(tF>tN){
+    float t=tN; bool got=false;
+    for(int k=0;k<56;k++){
+      vec3 p=ro+rd*t; float d=mapNear(p); float lx=abs(p.x-gBarX);
+      float guard=lx>uCell*0.5?1e3:uCell-uBW-lx;
+      minD=min(minD,d);
+      if(d<0.0012){got=true;break;}
+      t+=min(d,guard); if(t>tF)break;
+    }
+    if(got){
+      hit=1.0;
+      vec3 p=ro+rd*t; vec3 c=vec3(gBarX,gBarY,0.0), e=vec3(uBW,gBarH,uBD); vec3 q=p-c;
+      vec3 n=nrm(q,e);
+      /* faint pillow on the flat faces so each bar lenses what is behind it */
+      vec3 nb=normalize(n+vec3(q.x/e.x,q.y/e.y*0.25,0.0)*0.16*abs(n.z));
+      float ndv=max(dot(-rd,n),0.0);
+      vec3 r1=refract(rd,nb,1.0/IOR);
+      vec3 qi=q-n*0.004; vec3 sg=step(0.0,r1)*2.0-1.0; vec3 td=max(abs(r1),1e-4)*sg;
+      vec3 tm=(e*sg-qi)/td; float te=min(tm.x,min(tm.y,tm.z)); vec3 qe=qi+r1*te;
+      vec3 n2=nrm(qe,e);
+      vec3 r2=refract(r1,-n2,IOR); if(dot(r2,r2)<0.01) r2=reflect(r1,-n2);
+      vec3 pe=c+qe; float s=(ZB-pe.z)/max(r2.z,0.22);
+      vec2 off=((pe.xy+r2.xy*s)-hp.xy)*vec2(0.5/uAspect,0.5);
+      vec3 refr=vec3(bg(sUv+off*0.95).r,bg(sUv+off).g,bg(sUv+off*1.05).b);
+      float lum=dot(refr,vec3(0.3,0.59,0.11));
+      refr=mix(vec3(lum),refr,0.8)*0.98+vec3(0.035,0.04,0.05);
+      refr+=vec3(0.05)*smoothstep(-1.0,1.0,q.y/max(e.y,0.001));
+      /* soft colour in the glass that wanders slowly from bar to bar */
+      float band=smoothstep(0.5,0.8,vn(vec2(gBarX*0.5-uTime*0.09,uTime*0.035)));
+      float hn=vn(vec2(gBarX*0.22+uTime*0.03,3.0+uTime*0.04));
+      vec3 tint=mix(vec3(1.0),0.5+0.5*cos(6.2832*(hn*1.3+vec3(0.0,0.33,0.67))),0.5);
+      refr=mix(refr,refr*tint*1.06+tint*0.06,uTint*band);
+      /* a press sends a soft colour along with the wave */
+      vec4 rp=texture2D(uData,vec2((gBarI+0.5)/uN,0.75));
+      refr=mix(refr,refr*rp.rgb*1.2+rp.rgb*0.22,min(1.0,rp.a*1.15));
+      /* reflections: an overhead soft light, a cool fill from below, tinted by the scene */
+      vec3 rr=reflect(rd,n);
+      vec3 amb=bg(sUv+rr.xy*vec2(0.06,0.28));
+      vec3 env=amb*0.4+vec3(1.0)*smoothstep(0.25,0.95,rr.y)*0.6+vec3(0.6,0.78,1.0)*smoothstep(-0.3,-0.95,rr.y)*0.22;
+      float fres=0.04+0.96*pow(1.0-ndv,5.0);
+      vec3 h1=normalize(normalize(vec3(-0.45,0.8,-0.5))-rd), h2=normalize(normalize(vec3(0.5,-0.75,-0.55))-rd);
+      vec3 lit=vec3(1.0)*pow(max(dot(n,h1),0.0),90.0)*1.1+vec3(0.7,0.86,1.0)*pow(max(dot(n,h2),0.0),36.0)*0.45;
+      float bevel=smoothstep(0.03,0.3,1.0-max(abs(n.x),max(abs(n.y),abs(n.z))));
+      lit+=bevel*(0.14+0.44*max(n.y,0.0)+0.16*max(-n.y,0.0));
+      lit+=pow(1.0-ndv,3.0)*0.12;
+      lit+=rp.rgb*rp.a*(0.26+0.3*bevel);            /* the press glow lights the bar itself */
+      vec3 g=(mix(refr,env,fres)+lit)*(1.0+uLevel*0.1);
+      col=g;
+    }else{
+      float cov=clamp(1.0-minD/(px*1.2),0.0,1.0);
+      col=mix(col,col*0.8+vec3(0.3),cov*0.75);
+    }
+  }
+
+  /* pane finish: sheen, rim shade, grain */
+  float sheen=smoothstep(0.0,0.5,1.0-abs((vUv.x-0.28)*uAspect*0.5+(vUv.y-0.5)*0.9-0.1*sin(uTime*0.07)));
+  col+=vec3(0.05)*sheen*smoothstep(0.3,1.0,vUv.y);
+  col*=1.0-0.28*lip*lip*(1.0-0.6*smoothstep(0.0,1.0,vUv.y));
+  float grain=hash12(gl_FragCoord.xy+fract(uTime)*91.7)-0.5;
+  col+=grain*0.018;
+  float a=mix(mix(0.84,0.96,hit),1.0,uClear);
+  gl_FragColor=vec4(clamp(col,0.0,1.0)*a,a);
+}`;
+let progBlur,progMain,texScene,texData,fboA,fboB,dataBuf,glOK=!!gl;
+function mkProg(fs){
+  const p=gl.createProgram();
+  for(const [type,src] of [[gl.VERTEX_SHADER,VS],[gl.FRAGMENT_SHADER,fs]]){
+    const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p,s);
+  }
+  gl.bindAttribLocation(p,0,'a'); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u={}, n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
+  for(let i=0;i<n;i++){ const info=gl.getActiveUniform(p,i); u[info.name]=gl.getUniformLocation(p,info.name); }
+  return {p,u};
+}
+function mkTex(filter){
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,filter); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,filter);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  return t;
+}
+function mkFbo(){
+  const tex=mkTex(gl.LINEAR); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,SW,SHF,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  const fb=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  return {fb,tex};
+}
+function initGL(){
+  progBlur=mkProg(FS_BLUR); progMain=mkProg(FS_MAIN);
+  const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+  texScene=mkTex(gl.LINEAR); texData=mkTex(gl.NEAREST); fboA=mkFbo(); fboB=mkFbo();
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+}
+if(glOK){ try{ initGL(); }catch(e){ glOK=false; console.error(e); } }
+if(!glOK){ const d=document.createElement('div'); d.className='nogl'; d.textContent='Glassify could not start its 3D view on this Mac.'; $('widget').appendChild(d); }
+
+function blurPass(srcTex,dst,dx,dy){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dst.fb); gl.viewport(0,0,SW,SHF);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,srcTex);
+  gl.uniform1i(progBlur.u.uT,0); gl.uniform2f(progBlur.u.uDir,dx,dy); gl.drawArrays(gl.TRIANGLES,0,3);
+}
+
+/* ================= frame loop ================= */
+let hoverX=null, ripples=[]; const lift=new Float32Array(40), ripS=new Float32Array(40), glowS=new Float32Array(40), colS=new Float32Array(120).fill(1), RIP_T=2.3, RIP_R=7, RIP_GAP=0.34; let ripHue=0.55, lastRip=-9;
+let bands=new Float32Array(40), cur=new Float32Array(40), last=0, level=0, clock=0, r0=0;
+/* app: when nothing is playing and nothing is being touched, only the slow idle wave is left; it is then drawn on every other frame to stay light */
+let skip=false, busyUntil=0, shW=0, shH=0, shR=0;
+function atRest(){
+  if(playing||hoverX!==null||rz||drag||modeMix<1||coverFade<1||performance.now()<busyUntil) return false;
+  if(level>0.004||Math.abs(spinVel)>0.004||Math.abs(clearMix-(MODES[S.mode].id==='clear'?1:0))>0.004) return false;
+  if(ripples.length&&clock-ripples[ripples.length-1].t<RIP_T+RIP_GAP+0.4) return false;
+  for(let i=0;i<S.N;i++) if(cur[i]>0.004||lift[i]>0.004||Math.abs(ripS[i])>0.004||glowS[i]>0.004) return false;
+  return true;
+}
+function frame(now){
+  requestAnimationFrame(frame);
+  if(atRest()){ skip=!skip; if(skip) return; } else skip=false;
+  const tAbs=now/1000, dt=Math.min(0.05,Math.max(0.001,tAbs-last)); last=tAbs; clock+=dt;
+  const N=S.N;
+
+  /* layout: the bar strip keeps its size; the pane grows under it when settings are open */
+  /* A small widget is still drawn with the detail of a full-size one and scaled down, so bar edges and highlights
+     move in fractions of a pixel instead of jumping whole pixels (which reads as flicker). */
+  const dpr0=Math.min(2,window.devicePixelRatio||1), dpr=dpr0*Math.max(1,Math.min(2,1200/Math.max(1,widget.clientWidth*dpr0))), stripCss=Math.max(1,strip.clientHeight);
+  const w=Math.max(2,Math.round(widget.clientWidth*dpr)), h=Math.max(2,Math.round(widget.clientHeight*dpr)), stripPx=stripCss*dpr;
+  paneRows=h/stripPx;
+  if(Math.abs(stripCss/2-r0)>0.5){ r0=stripCss/2; widget.style.setProperty('--r0',r0+'px'); }
+
+  /* spectrum -> smoothed bar energy */
+  if(!playing) bands.fill(0); else bands.set(ext);
+  let lv=0;
+  for(let i=0;i<N;i++){ const k=bands[i]>cur[i]?1-Math.exp(-dt*30):1-Math.exp(-dt*6.5); cur[i]+=(bands[i]-cur[i])*k; if(i<4) lv+=cur[i]; }
+  level+=(lv/4-level)*(1-Math.exp(-dt*12));
+
+  /* bar heights + the slow wake they ride on */
+  const span=2*(ASPECT-0.66), cell=span/N, bw=cell*0.31, bd=Math.min(0.2,cell*0.58), rad=Math.min(bw*0.42,0.04);
+  if(!dataBuf||dataBuf.length!==N*8) dataBuf=new Uint8Array(N*8);
+  const A=0.085*S.wave, t=clock; let ym=0;
+  for(let j=0;j<N;j++){
+    const c=j-(N-1)/2, x=c*cell, k=Math.floor(Math.abs(c)), bi=Math.min(N-1,2*k+(c>0?1:0));
+    const taper=1-0.4*Math.pow(Math.abs(c)/(N/2),2);
+    const hh=Math.min(0.95,0.072+Math.min(1,cur[bi]*S.react)*0.74*taper);
+    let yo=A*(0.58*Math.sin(1.15*x-0.9*t)*(0.65+0.35*Math.sin(0.23*t-0.4*x))+0.3*Math.sin(2.1*x-1.22*t+1.7)+0.14*Math.sin(3.4*x-1.55*t+0.6));
+    const hx=hoverX===null?99:Math.abs(x-hoverX), hd=hx/1.5;
+    /* neighbours rise on a soft falloff; only the single bar under the cursor gets the extra jump */
+    const tgt=(hd<1?0.13*(0.5+0.5*Math.cos(Math.PI*hd)):0)+(hoverX!==null&&j===Math.round(hoverX/cell+(N-1)/2)?0.24:0);
+    let rip=0, glow=0, gr=0, gg=0, gb=0, press=0;
+    for(const r of ripples) for(let w=0;w<2;w++){            /* w=1 is the smaller ripple that follows */
+      const tau=clock-r.t-w*RIP_GAP; if(tau<0||tau>RIP_T) continue;
+      /* the pressed bar is pushed down first (fast in, slower release); that push is what sends the wave out */
+      if(w===0&&j===r.j) press+=r.a*(1-Math.exp(-tau/0.035))*Math.exp(-tau/0.22);
+      /* the wave leads with a dip, then the crest: the front starts just behind the pressed bar so the dip is centred on it at the moment of the press */
+      const pr=tau/RIP_T, front=RIP_R*(1-Math.pow(1-pr,2.2))-1.275, u=(Math.abs(x-r.x)-front)/0.85;
+      const at=Math.min(1,tau/0.12), env=Math.pow(1-pr,1.1)*at*at*(3-2*at)*(w?0.5:1)*r.a, sh=Math.exp(-u*u)-0.45*Math.exp(-(u-1.5)*(u-1.5))-0.3*Math.exp(-(u+1.6)*(u+1.6));
+      rip+=0.3*env*sh; const g=env*Math.max(0,sh); glow+=g; gr+=g*r.c[0]; gg+=g*r.c[1]; gb+=g*r.c[2]; }
+    /* however many presses pile up: the sum saturates softly and is eased over time, so nothing can jump */
+    rip=0.42*Math.tanh(rip/0.42);
+    const ks=1-Math.exp(-dt*24);
+    ripS[j]+=(rip-ripS[j])*ks; glowS[j]+=(Math.min(1,glow)-glowS[j])*ks;
+    if(glow>1e-4){ colS[j*3]+=(gr/glow-colS[j*3])*ks; colS[j*3+1]+=(gg/glow-colS[j*3+1])*ks; colS[j*3+2]+=(gb/glow-colS[j*3+2])*ks; }
+    lift[j]+=(tgt-lift[j])*(1-Math.exp(-dt*(tgt>lift[j]?10:4.5)));
+    { const lim=Math.max(0.02,0.94-hh); yo=lim*Math.tanh((yo+lift[j]+ripS[j]-0.75*Math.tanh(press))/lim); }
+    ym=Math.max(ym,Math.abs(yo)+hh);
+    const hv=Math.round(hh*65535), yv=Math.round((yo+0.5)*65535);
+    dataBuf[j*4]=hv>>8; dataBuf[j*4+1]=hv&255; dataBuf[j*4+2]=yv>>8; dataBuf[j*4+3]=yv&255;
+    { const o=N*4+j*4; dataBuf[o]=Math.round(colS[j*3]*255); dataBuf[o+1]=Math.round(colS[j*3+1]*255); dataBuf[o+2]=Math.round(colS[j*3+2]*255); dataBuf[o+3]=Math.round(Math.min(1,glowS[j])*255); }
+  }
+
+  /* background scene */
+  modeMix=Math.min(1,modeMix+dt/0.9); coverFade=Math.min(1,coverFade+dt/1.2);
+  const mixE=modeMix*modeMix*(3-2*modeMix);
+  { const need=MODES[S.mode].id==='clear'||(modeMix<1&&MODES[modePrev].id==='clear'); if(need!==wantBack){ wantBack=need; post('clear',{on:need}); } }
+  drawMode(modeMix<1?modePrev:S.mode,sx,dt,level);
+  if(modeMix<1){ drawMode(S.mode,tx,dt,level); sx.globalAlpha=mixE; sx.drawImage(tmp,0,0); sx.globalAlpha=1; }
+  if(!glOK) return;
+
+  if(canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; }
+
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texScene);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,scene);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+  gl.bindTexture(gl.TEXTURE_2D,texData);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,N,2,0,gl.RGBA,gl.UNSIGNED_BYTE,dataBuf);
+
+  gl.useProgram(progBlur.p);
+  const b=blurOf(modePrev)*(1-mixE)+blurOf(S.mode)*mixE;
+  blurPass(texScene,fboA,b/SW,0); blurPass(fboA.tex,fboB,0,b/SHF);
+  blurPass(fboB.tex,fboA,2*b/SW,0); blurPass(fboA.tex,fboB,0,2*b/SHF);
+  blurPass(fboB.tex,fboA,3*b/SW,0); blurPass(fboA.tex,fboB,0,3*b/SHF);
+
+  clearMix+=((MODES[S.mode].id==='clear'?1:0)-clearMix)*(1-Math.exp(-dt*4.5));
+  const radCss=parseFloat(getComputedStyle(widget).borderTopLeftRadius)||r0;
+  if(w!==shW||h!==shH||Math.abs(radCss-shR)>0.2){ shW=w; shH=h; shR=radCss; post('shape',{w:widget.clientWidth,h:widget.clientHeight,r:radCss}); }   /* the app needs the outline for clicks and for the blur behind the glass */
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,w,h);
+  gl.useProgram(progMain.p); const u=progMain.u;
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,fboB.tex); gl.uniform1i(u.uBg,0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,texData); gl.uniform1i(u.uData,1);
+  gl.uniform2f(u.uRes,w,h); gl.uniform1f(u.uStrip,stripPx); gl.uniform1f(u.uRadPx,Math.min(radCss*dpr,h/2,w/2));
+  gl.uniform1f(u.uAspect,w/stripPx); gl.uniform1f(u.uN,N); gl.uniform1f(u.uCell,cell);
+  gl.uniform1f(u.uBW,bw); gl.uniform1f(u.uBD,bd); gl.uniform1f(u.uRad,rad); gl.uniform1f(u.uPitch,S.angle*Math.PI/180);
+  gl.uniform1f(u.uYM,ym+0.02); gl.uniform1f(u.uTime,clock); gl.uniform1f(u.uLevel,level); gl.uniform1f(u.uTint,S.tint);
+  gl.uniform1f(u.uClear,clearMix); gl.uniform1f(u.uWarp,1+clearMix*(1.8*S.cWarp-0.6)); gl.uniform1f(u.uFrost,clearMix*S.cFrost*0.22);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+
+/* ================= settings drawer ================= */
+const plus=$('btnSettings'); let open=false;
+/* the app sizes its window around the glass: it needs the width, the strip height and how tall the open settings are */
+let fitKey='';
+function fit(){ const w=Math.round(600*S.scale), p=open?panel.offsetHeight:0, k=w+'/'+p; if(k===fitKey) return; fitKey=k; busyUntil=performance.now()+900; post('fit',{w:w,strip:w/ASPECT,panel:p}); }
+function fitDrawer(){ drawer.style.height=open?panel.offsetHeight+'px':'0px'; fit(); }
+function setOpen(o){ open=o; widget.classList.toggle('open',o); plus.setAttribute('aria-expanded',o?'true':'false'); drawer.inert=!o; fitDrawer(); }
+plus.addEventListener('click',()=>setOpen(!open));
+if(window.ResizeObserver) new ResizeObserver(fitDrawer).observe(panel);
+function syncModeUI(){
+  [...$('modeRow').children].forEach((b,i)=>b.setAttribute('aria-pressed',i===S.mode?'true':'false'));
+  [...$('dots').children].forEach((d,i)=>d.classList.toggle('on',i===S.mode));
+  MODES.forEach((m,i)=>{ $('sec-'+m.id).hidden=i!==S.mode; });
+  fitDrawer();
+}
+MODES.forEach((m,i)=>{
+  const b=document.createElement('button'); b.type='button'; b.id='mode-'+m.id; b.textContent=m.name; b.onclick=()=>setMode(i); $('modeRow').appendChild(b);
+  $('dots').appendChild(document.createElement('i'));
+});
+$('dots').addEventListener('click',()=>setMode((S.mode+1)%MODES.length));
+
+SHAPES.forEach(sh=>{
+  const b=document.createElement('button'); b.type='button'; b.id='shape-'+sh; b.textContent=sh[0].toUpperCase()+sh.slice(1);
+  b.setAttribute('aria-pressed',S.types.includes(sh)?'true':'false');
+  b.onclick=()=>{ const on=S.types.includes(sh); if(on&&S.types.length===1) return;
+    S.types=on?S.types.filter(x=>x!==sh):S.types.concat(sh); b.setAttribute('aria-pressed',on?'false':'true'); save(); };
+  $('shapeRow').appendChild(b);
+});
+function buildSwatches(){
+  const row=$('swRow'); row.textContent='';
+  S.colors.forEach((c,i)=>{ const inp=document.createElement('input'); inp.type='color'; inp.id='col'+i; inp.value=c; inp.setAttribute('aria-label','Shape colour '+(i+1));
+    inp.oninput=()=>{ S.colors[i]=inp.value; save(); }; row.appendChild(inp); });
+  const sep=document.createElement('span'); sep.className='sep'; row.appendChild(sep);
+  const bgI=document.createElement('input'); bgI.type='color'; bgI.id='colBg'; bgI.value=S.bg; bgI.setAttribute('aria-label','Backdrop colour');
+  bgI.oninput=()=>{ S.bg=bgI.value; save(); }; row.appendChild(bgI);
+  const l=document.createElement('span'); l.className='tiny'; l.textContent='backdrop'; row.appendChild(l);
+}
+buildSwatches();
+Object.keys(PALETTES).forEach(name=>{
+  const b=document.createElement('button'); b.type='button'; b.id='pal-'+name; b.textContent=name;
+  b.onclick=()=>{ S.colors=PALETTES[name].c.slice(); S.bg=PALETTES[name].bg; buildSwatches(); save(); };
+  $('palRow').appendChild(b);
+});
+const x1=v=>v.toFixed(2)+'×';
+function slider(host,id,label,key,min,max,step,fmt,after){
+  const wrap=document.createElement('div'); wrap.className='sl';
+  const lab=document.createElement('label'); lab.htmlFor='s'+id; lab.textContent=label;
+  const el=document.createElement('input'); el.type='range'; el.id='s'+id; el.min=min; el.max=max; el.step=step; el.value=S[key];
+  const out=document.createElement('output'); out.id='o'+id; out.textContent=fmt(S[key]);
+  el.oninput=()=>{ S[key]=parseFloat(el.value); out.textContent=fmt(S[key]); if(after) after(); save(); };
+  wrap.append(lab,el,out); $(host).appendChild(wrap);
+}
+slider('slDrift','Count','How many','count',2,18,1,v=>String(v),buildShapes);
+slider('slDrift','Size','Size','size',0.4,2,0.05,x1);
+slider('slDrift','Speed','Speed','speed',0,3,0.05,x1);
+slider('slDrift','Blur','Blur','blur',0.2,2.2,0.05,x1);
+slider('slVinyl','VBlur','Blur','vBlur',0.1,2.2,0.05,x1);
+slider('slVinyl','VSpin','Spin','vSpin',0,3,0.05,x1);
+slider('slVinyl','VDim','Dim','vDim',0,0.7,0.02,v=>Math.round(v*100)+'%');
+slider('slClear','CBlur','Blur','cBlur',0.3,2.2,0.05,x1);   /* below 0.3 moving fine detail starts to shimmer */
+slider('slClear','CFrost','Frost','cFrost',0,1,0.05,v=>Math.round(v*100)+'%');
+slider('slClear','CWarp','Edge warp','cWarp',0,2,0.05,x1);
+buildShapes(); syncModeUI(); setOpen(false);
+
+/* ================= what the app feeds in ================= */
+window.__gw={
+  bands(a){ for(let i=0;i<40;i++) ext[i]=i<a.length?a[i]:0; },
+  playing(p){ playing=!!p; },
+  track(title,artist,src){
+    if(!src){ setTrack(title,artist,noCover); return; }
+    const img=new Image();
+    img.onload=()=>{ const c=document.createElement('canvas'); c.width=c.height=256; const s=Math.min(img.width,img.height);
+      c.getContext('2d').drawImage(img,(img.width-s)/2,(img.height-s)/2,s,s,0,0,256,256); setTrack(title,artist,c); };
+    img.onerror=()=>setTrack(title,artist,noCover);
+    img.src=src;
+  },
+  frame(){ pullFrame(); }
+};
+
+/* ================= pointer: hover lift, press wave, drag ================= */
+let drag=null;
+const worldX=e=>{ const r=canvas.getBoundingClientRect(); return ((e.clientX-r.left)/r.width*2-1)*ASPECT; };
+function pressBar(e){
+  /* ripples always live out their full life (never cut off); very fast presses are thinned out and each new one is gentler when many are already travelling */
+  ripples=ripples.filter(q=>clock-q.t<RIP_T+RIP_GAP);
+  if(clock-lastRip<0.09||ripples.length>=20) return;
+  lastRip=clock; ripHue=(ripHue+0.382)%1;
+  const c=[0,0.33,0.67].map(o=>1-0.6+0.6*(0.5+0.5*Math.cos(6.2832*(ripHue+o))));
+  const cell=2*(ASPECT-0.66)/S.N, j=Math.max(0,Math.min(S.N-1,Math.round(worldX(e)/cell+(S.N-1)/2)));   /* the wave starts from the bar under the cursor */
+  ripples.push({x:(j-(S.N-1)/2)*cell,j,t:clock,c,a:1/Math.sqrt(1+ripples.length*0.6)});
+}
+const onCtl=e=>e.target.closest('.plus,.dots,.grab');
+strip.addEventListener('pointerdown',e=>{ if(onCtl(e)) return; hoverX=worldX(e); pressBar(e); });
+strip.addEventListener('pointermove',e=>{ hoverX=onCtl(e)?null:worldX(e); });
+strip.addEventListener('pointercancel',()=>{ hoverX=null; });
+strip.addEventListener('pointerleave',()=>{ hoverX=null; });
+
+/* ================= resize from the corner ================= */
+const grip=$('grip'); let rz=null;
+function setScale(v){
+  S.scale=Math.max(0.5,Math.min(1.6,v)); widget.style.setProperty('--scale',S.scale);   /* the window keeps its top-left where it was, so the glass grows toward the corner being dragged */
+  fitDrawer(); save();
+}
+grip.addEventListener('pointerdown',e=>{ rz={x:e.clientX,y:e.clientY,w:widget.offsetWidth}; widget.classList.add('resizing'); try{grip.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
+grip.addEventListener('pointermove',e=>{ if(!rz) return; const grow=(e.clientX-rz.x)+(e.clientY-rz.y)*1.2; setScale((rz.w+grow)/600,true); });
+const endRz=()=>{ rz=null; widget.classList.remove('resizing'); };
+grip.addEventListener('pointerup',endRz); grip.addEventListener('pointercancel',endRz);
+grip.addEventListener('keydown',e=>{ const d={ArrowRight:0.05,ArrowDown:0.05,ArrowLeft:-0.05,ArrowUp:-0.05}[e.key]; if(d){ e.preventDefault(); setScale(S.scale+d,true); } });
+if(!(S.scale>=0.5&&S.scale<=1.6)) S.scale=1;
+widget.style.setProperty('--scale',S.scale);
+
+/* ================= move with the small bar at the top ================= */
+const grab=$('grab');
+/* the app moves its own window: from the press it follows the mouse until the button is let go */
+grab.addEventListener('pointerdown',e=>{ drag=true; widget.classList.add('moving'); try{grab.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); post('drag'); });
+const endDrag=()=>{ drag=null; widget.classList.remove('moving'); post('dragEnd'); };
+grab.addEventListener('pointerup',endDrag); grab.addEventListener('pointercancel',endDrag);
+grab.addEventListener('keydown',e=>{ const d={ArrowLeft:[-12,0],ArrowRight:[12,0],ArrowUp:[0,-12],ArrowDown:[0,12]}[e.key]; if(d){ e.preventDefault(); post('nudge',{dx:d[0],dy:d[1]}); } });
+/* a click in the settings lets the widget take the keyboard (sliders, colour fields); a click on the bars never takes it from the editor */
+panel.addEventListener('pointerdown',()=>post('key'));
+
+fit(); post('ready');
+requestAnimationFrame(frame);
+})();
+</script>
